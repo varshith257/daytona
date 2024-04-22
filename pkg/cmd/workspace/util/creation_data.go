@@ -10,9 +10,10 @@ import (
 	"github.com/daytonaio/daytona/pkg/views/workspace/create"
 )
 
-func GetCreationDataFromPrompt(workspaceNames []string, userGitProviders []serverapiclient.GitProvider, manual, multiProject, advancedFlag bool) (workspaceName string, projectRepositoryList []serverapiclient.GitRepository, err error) {
-	var projectRepoList []serverapiclient.GitRepository
+func GetCreationDataFromPrompt(workspaceNames []string, userGitProviders []serverapiclient.GitProvider, manual bool, multiProject bool, advancedFlag bool) (string, []serverapiclient.CreateWorkspaceRequestProject, error) {
+	var projectList []serverapiclient.CreateWorkspaceRequestProject
 	var providerRepo serverapiclient.GitRepository
+	var err error
 
 	if !manual && userGitProviders != nil && len(userGitProviders) > 0 {
 		providerRepo, err = getRepositoryFromWizard(userGitProviders, 0)
@@ -24,21 +25,25 @@ func GetCreationDataFromPrompt(workspaceNames []string, userGitProviders []serve
 		}
 	}
 
-	workspaceCreationPromptResponse, err := create.RunInitialForm(providerRepo, multiProject, advancedFlag)
+	if providerRepo.Url == nil {
+		providerRepo.Url = new(string)
+	}
+
+	workspaceCreationPromptResponse, err := create.RunInitialForm(*providerRepo.Url, multiProject, advancedFlag)
 	if err != nil {
 		return "", nil, err
 	}
 
-	if workspaceCreationPromptResponse.PrimaryRepository == (serverapiclient.GitRepository{}) {
-		return "", nil, errors.New("primary repository is required")
+	if workspaceCreationPromptResponse.PrimaryProject == (serverapiclient.CreateWorkspaceRequestProject{}) {
+		return "", nil, errors.New("primary project is required")
 	}
 
-	projectRepoList = []serverapiclient.GitRepository{workspaceCreationPromptResponse.PrimaryRepository}
+	projectList = []serverapiclient.CreateWorkspaceRequestProject{workspaceCreationPromptResponse.PrimaryProject}
 
-	if workspaceCreationPromptResponse.SecondaryProjectCount > 0 {
+	if multiProject {
+		for i := 0; workspaceCreationPromptResponse.AddingMoreProjects; i++ {
 
-		if !manual && userGitProviders != nil && len(userGitProviders) > 0 {
-			for i := 0; i < workspaceCreationPromptResponse.SecondaryProjectCount; i++ {
+			if !manual && userGitProviders != nil && len(userGitProviders) > 0 {
 				providerRepo, err = getRepositoryFromWizard(userGitProviders, i+1)
 				if err != nil {
 					return "", nil, err
@@ -46,19 +51,25 @@ func GetCreationDataFromPrompt(workspaceNames []string, userGitProviders []serve
 				if providerRepo == (serverapiclient.GitRepository{}) {
 					return "", nil, nil
 				}
-				workspaceCreationPromptResponse.SecondaryRepositories = append(workspaceCreationPromptResponse.SecondaryRepositories, providerRepo)
+
+				primaryProject := serverapiclient.CreateWorkspaceRequestProject{
+					Source: &serverapiclient.CreateWorkspaceRequestProjectSource{
+						Repository: &providerRepo,
+					},
+				}
+
+				workspaceCreationPromptResponse.SecondaryProjects = append(workspaceCreationPromptResponse.SecondaryProjects, primaryProject)
+			}
+
+			workspaceCreationPromptResponse, err = create.RunProjectForm(workspaceCreationPromptResponse)
+			if err != nil {
+				return "", nil, err
 			}
 		}
-
-		workspaceCreationPromptResponse, err = create.RunSecondaryProjectsForm(workspaceCreationPromptResponse)
-		if err != nil {
-			return "", nil, err
-		}
-
-		projectRepoList = append(projectRepoList, workspaceCreationPromptResponse.SecondaryRepositories...)
+		projectList = append(projectList, workspaceCreationPromptResponse.SecondaryProjects...)
 	}
 
-	suggestedName := create.GetSuggestedWorkspaceName(*workspaceCreationPromptResponse.PrimaryRepository.Url)
+	suggestedName := create.GetSuggestedWorkspaceName(*workspaceCreationPromptResponse.PrimaryProject.Source.Repository.Url)
 
 	workspaceCreationPromptResponse, err = create.RunWorkspaceNameForm(workspaceCreationPromptResponse, suggestedName, workspaceNames)
 	if err != nil {
@@ -69,5 +80,5 @@ func GetCreationDataFromPrompt(workspaceNames []string, userGitProviders []serve
 		return "", nil, errors.New("workspace name is required")
 	}
 
-	return workspaceCreationPromptResponse.WorkspaceName, projectRepoList, nil
+	return workspaceCreationPromptResponse.WorkspaceName, projectList, nil
 }

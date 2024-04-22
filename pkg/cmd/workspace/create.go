@@ -43,7 +43,7 @@ var CreateCmd = &cobra.Command{
 	Args:  cobra.RangeArgs(0, 1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
-		var repos []serverapiclient.GitRepository
+		var projects []serverapiclient.CreateWorkspaceRequestProject
 		var workspaceName string
 
 		apiClient, err := server.GetApiClient(nil)
@@ -62,25 +62,28 @@ var CreateCmd = &cobra.Command{
 		}
 
 		if len(args) == 0 {
-			processPrompting(cmd, apiClient, &workspaceName, &repos, ctx)
+			processPrompting(cmd, apiClient, &workspaceName, &projects, ctx)
 		} else {
-			processCmdArguments(cmd, args, apiClient, &workspaceName, &repos, ctx)
+			processCmdArguments(cmd, args, apiClient, &workspaceName, &projects, ctx)
 		}
 
 		view_util.RenderMainTitle("WORKSPACE CREATION")
 
-		if workspaceName == "" || len(repos) == 0 {
+		if workspaceName == "" || len(projects) == 0 {
 			log.Fatal("workspace name and repository urls are required")
 			return
 		}
 
 		visited := make(map[string]bool)
 
-		for _, repo := range repos {
-			if visited[*repo.Url] {
-				log.Fatalf("Error: duplicate repository url: %s", *repo.Url)
+		for _, project := range projects {
+			if project.Source == nil || project.Source.Repository == nil || project.Source.Repository.Url == nil {
+				continue
 			}
-			visited[*repo.Url] = true
+			if visited[*project.Source.Repository.Url] {
+				log.Fatalf("Error: duplicate repository url: %s", *project.Source.Repository.Url)
+			}
+			visited[*project.Source.Repository.Url] = true
 		}
 
 		target, err := getTarget(activeProfile.Name)
@@ -118,15 +121,16 @@ var CreateCmd = &cobra.Command{
 			}
 		}()
 
-		projects := []serverapiclient.CreateWorkspaceRequestProject{}
-		for _, repo := range repos {
+		projectRequests := []serverapiclient.CreateWorkspaceRequestProject{}
+
+		for _, project := range projects {
 			projectNameSlugRegex := regexp.MustCompile(`[^a-zA-Z0-9-]`)
-			projectName := projectNameSlugRegex.ReplaceAllString(strings.TrimSuffix(strings.ToLower(filepath.Base(*repo.Url)), ".git"), "-")
-			projects = append(projects, serverapiclient.CreateWorkspaceRequestProject{
+			projectName := projectNameSlugRegex.ReplaceAllString(strings.TrimSuffix(strings.ToLower(filepath.Base(*project.Source.Repository.Url)), ".git"), "-")
+			projectRequests = append(projects, serverapiclient.CreateWorkspaceRequestProject{
 				Id:   &projectName,
 				Name: &projectName,
 				Source: &serverapiclient.CreateWorkspaceRequestProjectSource{
-					Repository: &repo,
+					Repository: project.Source.Repository,
 				},
 			})
 		}
@@ -135,7 +139,7 @@ var CreateCmd = &cobra.Command{
 			Id:       &id,
 			Name:     &workspaceName,
 			Target:   target.Name,
-			Projects: projects,
+			Projects: projectRequests,
 		}).Execute()
 		if err != nil {
 			cleanUpTerminal(statusProgram, apiclient.HandleErrorResponse(res, err))
@@ -215,8 +219,8 @@ func getTarget(activeProfileName string) (*serverapiclient.ProviderTarget, error
 	return target.GetTargetFromPrompt(targets, activeProfileName, false)
 }
 
-func processPrompting(cmd *cobra.Command, apiClient *serverapiclient.APIClient, workspaceName *string, repos *[]serverapiclient.GitRepository, ctx context.Context) {
-	manual, err := cmd.Flags().GetBool("manual")
+func processPrompting(cmd *cobra.Command, apiClient *serverapiclient.APIClient, workspaceName *string, projects *[]serverapiclient.CreateWorkspaceRequestProject, ctx context.Context) {
+	manualFlag, err := cmd.Flags().GetBool("manual")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -252,15 +256,14 @@ func processPrompting(cmd *cobra.Command, apiClient *serverapiclient.APIClient, 
 	for _, workspaceInfo := range workspaceList {
 		workspaceNames = append(workspaceNames, *workspaceInfo.Name)
 	}
-
-	*workspaceName, *repos, err = workspace_util.GetCreationDataFromPrompt(workspaceNames, gitProviders, manual, multiProjectFlag, advancedFlag)
+	*workspaceName, *projects, err = workspace_util.GetCreationDataFromPrompt(workspaceNames, gitProviders, manualFlag, multiProjectFlag, advancedFlag)
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
 }
 
-func processCmdArguments(cmd *cobra.Command, args []string, apiClient *serverapiclient.APIClient, workspaceName *string, repos *[]serverapiclient.GitRepository, ctx context.Context) {
+func processCmdArguments(cmd *cobra.Command, args []string, apiClient *serverapiclient.APIClient, workspaceName *string, projects *[]serverapiclient.CreateWorkspaceRequestProject, ctx context.Context) {
 	var repoUrls []string
 
 	validatedWorkspaceName, err := util.GetValidatedWorkspaceName(args[0])
@@ -287,11 +290,13 @@ func processCmdArguments(cmd *cobra.Command, args []string, apiClient *serverapi
 			log.Fatal(apiclient.HandleErrorResponse(res, err))
 		}
 
-		repo := &serverapiclient.GitRepository{
-			Url: repoResponse.Url,
+		project := &serverapiclient.CreateWorkspaceRequestProject{
+			Source: &serverapiclient.CreateWorkspaceRequestProjectSource{
+				Repository: &serverapiclient.GitRepository{Url: repoResponse.Url},
+			},
 		}
 
-		*repos = append(*repos, *repo)
+		*projects = append(*projects, *project)
 	}
 }
 

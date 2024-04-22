@@ -6,7 +6,6 @@ package create
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -32,10 +31,10 @@ type Styles struct {
 }
 
 type WorkspaceCreationPromptResponse struct {
-	WorkspaceName         string
-	PrimaryRepository     serverapiclient.GitRepository
-	SecondaryRepositories []serverapiclient.GitRepository
-	SecondaryProjectCount int
+	WorkspaceName      string
+	PrimaryProject     serverapiclient.CreateWorkspaceRequestProject
+	SecondaryProjects  []serverapiclient.CreateWorkspaceRequestProject
+	AddingMoreProjects bool
 }
 
 func NewStyles(lg *lipgloss.Renderer) *Styles {
@@ -67,25 +66,14 @@ type Model struct {
 	lg                              *lipgloss.Renderer
 	styles                          *Styles
 	form                            *huh.Form
-	altForm                         *huh.Form
 	width                           int
 	workspaceCreationPromptResponse WorkspaceCreationPromptResponse
-	altscreen                       bool
-	quitting                        bool
 }
 
-func RunInitialForm(providerRepo serverapiclient.GitRepository, multiProject, advancedFlag bool) (WorkspaceCreationPromptResponse, error) {
+func RunInitialForm(primaryRepoUrl string, multiProject, advancedFlag bool) (WorkspaceCreationPromptResponse, error) {
 	m := Model{width: maxWidth}
 	m.lg = lipgloss.DefaultRenderer()
 	m.styles = NewStyles(m.lg)
-
-	var primaryRepoUrl string
-
-	if providerRepo.Url != nil {
-		primaryRepoUrl = *providerRepo.Url
-	}
-
-	secondaryProjectsCountString := ""
 
 	primaryRepoPrompt := huh.NewInput().
 		Title("Primary project repository").
@@ -100,45 +88,12 @@ func RunInitialForm(providerRepo serverapiclient.GitRepository, multiProject, ad
 			return nil
 		})
 
-	secondaryProjectCountPrompt := huh.NewInput().
-		Title("How many secondary projects?").
-		Value(&secondaryProjectsCountString).
-		Validate(func(str string) error {
-			count, err := strconv.Atoi(str) // Try to convert the input string to an integer
-			if err != nil {
-				return errors.New("enter a valid number")
-			}
-			if count > maximumSecondaryProjects {
-				return errors.New("maximum 8 secondary projects allowed")
-			}
-			return nil
-		})
-
-	advancedGroup := huh.NewGroup(
-		huh.NewInput().
-			Title("Advanced").
-			Value(&secondaryProjectsCountString).
-			Validate(func(str string) error {
-				count, err := strconv.Atoi(str) // Try to convert the input string to an integer
-				if err != nil {
-					return errors.New("enter a valid number")
-				}
-				if count > maximumSecondaryProjects {
-					return errors.New("maximum 8 secondary projects allowed")
-				}
-				return nil
-			}))
-
 	dTheme := views.GetCustomTheme()
 
 	m.form = huh.NewForm(
-		advancedGroup.WithHide(!advancedFlag),
 		huh.NewGroup(
 			primaryRepoPrompt,
 		).WithHide(primaryRepoUrl != ""),
-		huh.NewGroup(
-			secondaryProjectCountPrompt,
-		).WithHide(!multiProject),
 	).WithTheme(dTheme).
 		WithWidth(maxWidth).
 		WithShowHelp(false).
@@ -149,67 +104,56 @@ func RunInitialForm(providerRepo serverapiclient.GitRepository, multiProject, ad
 		return WorkspaceCreationPromptResponse{}, err
 	}
 
-	secondaryProjectsCount, err := strconv.Atoi(secondaryProjectsCountString)
-	if err != nil {
-		secondaryProjectsCount = 0
+	primaryProject := serverapiclient.CreateWorkspaceRequestProject{
+		Source: &serverapiclient.CreateWorkspaceRequestProjectSource{
+			Repository: &serverapiclient.GitRepository{Url: &primaryRepoUrl},
+		},
 	}
 
-	providerRepo.Url = &primaryRepoUrl
-
 	return WorkspaceCreationPromptResponse{
-		PrimaryRepository:     providerRepo,
-		SecondaryProjectCount: secondaryProjectsCount,
+		WorkspaceName:      "",
+		PrimaryProject:     primaryProject,
+		SecondaryProjects:  []serverapiclient.CreateWorkspaceRequestProject{},
+		AddingMoreProjects: multiProject,
 	}, nil
 }
 
-func RunSecondaryProjectsForm(workspaceCreationPromptResponse WorkspaceCreationPromptResponse) (WorkspaceCreationPromptResponse, error) {
+func RunProjectForm(workspaceCreationPromptResponse WorkspaceCreationPromptResponse) (WorkspaceCreationPromptResponse, error) {
 	m := Model{width: maxWidth, workspaceCreationPromptResponse: workspaceCreationPromptResponse}
 	m.lg = lipgloss.DefaultRenderer()
 	m.styles = NewStyles(m.lg)
 
-	var secondaryRepoList []serverapiclient.GitRepository
-	count := workspaceCreationPromptResponse.SecondaryProjectCount
-
-	secondaryRepoList = workspaceCreationPromptResponse.SecondaryRepositories
-
-	// Add empty strings to the slice
-	for i := 0; i < (count - len(workspaceCreationPromptResponse.SecondaryRepositories)); i++ {
-		emptyString := ""
-		secondaryRepoList = append(secondaryRepoList, serverapiclient.GitRepository{
-			Url: &emptyString,
-		})
+	project := serverapiclient.CreateWorkspaceRequestProject{
+		Source: &serverapiclient.CreateWorkspaceRequestProjectSource{
+			Repository: &serverapiclient.GitRepository{Url: new(string)},
+		},
 	}
 
-	formFields := make([]huh.Field, count+1)
-	for i := 0; i < count; i++ {
-		formFields[i] = huh.NewInput().
-			Title(getOrderNumberString(i+1) + " secondary project repository").
-			Value(secondaryRepoList[i].Url).
-			Key(fmt.Sprintf("secondaryRepo%d", i)).
-			Validate(func(str string) error {
-				_, err := util.GetValidatedUrl(str)
-				if err != nil {
-					return err
-				}
-				return nil
-			})
-	}
-
-	formFields[count] = huh.NewConfirm().
-		Title("Good to go?").
-		Validate(func(v bool) error {
-			if !v {
-				return fmt.Errorf("double-check and hit 'Yes'")
-			}
-			return nil
-		})
-
-	secondaryRepoGroup := huh.NewGroup(
-		formFields...,
-	)
+	var moreCheck bool
 
 	m.form = huh.NewForm(
-		secondaryRepoGroup,
+		huh.NewGroup(
+			huh.NewInput().
+				Title(getOrderNumberString(len(workspaceCreationPromptResponse.SecondaryProjects)+1)+" secondary project repository").
+				Value(project.Source.Repository.Url).
+				Key(fmt.Sprintf("secondaryRepo%d", len(workspaceCreationPromptResponse.SecondaryProjects)+1)).
+				Validate(func(str string) error {
+					_, err := util.GetValidatedUrl(str)
+					if err != nil {
+						return err
+					}
+					return nil
+				}),
+			huh.NewConfirm().
+				Title("Add another project?").
+				Value(&moreCheck).
+				Validate(func(b bool) error {
+					if len(workspaceCreationPromptResponse.SecondaryProjects) >= maximumSecondaryProjects {
+						return errors.New("maximum 8 secondary projects allowed")
+					}
+					return nil
+				}),
+		),
 	).
 		WithWidth(maxWidth).
 		WithShowHelp(false).
@@ -221,16 +165,15 @@ func RunSecondaryProjectsForm(workspaceCreationPromptResponse WorkspaceCreationP
 		return WorkspaceCreationPromptResponse{}, err
 	}
 
-	for i := 0; i < count; i++ {
-		validatedURL, err := util.GetValidatedUrl(*secondaryRepoList[i].Url)
-		if err != nil {
-			return WorkspaceCreationPromptResponse{}, err
-		}
-		*secondaryRepoList[i].Url = validatedURL
+	validatedURL, err := util.GetValidatedUrl(*project.Source.Repository.Url)
+	if err != nil {
+		return WorkspaceCreationPromptResponse{}, err
 	}
 
+	*project.Source.Repository.Url = validatedURL
 	result := workspaceCreationPromptResponse
-	result.SecondaryRepositories = secondaryRepoList
+	result.SecondaryProjects = append(result.SecondaryProjects, project)
+	result.AddingMoreProjects = moreCheck
 
 	return result, nil
 }
