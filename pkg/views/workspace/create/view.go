@@ -71,7 +71,7 @@ type Model struct {
 	workspaceCreationPromptResponse WorkspaceCreationPromptResponse
 }
 
-func RunInitialForm(providerRepo serverapiclient.GitRepository, multiProject bool) (WorkspaceCreationPromptResponse, error) {
+func RunInitialForm(providerRepo serverapiclient.GitRepository, multiProject, advancedFlag bool) (WorkspaceCreationPromptResponse, error) {
 	m := Model{width: maxWidth}
 	m.lg = lipgloss.DefaultRenderer()
 	m.styles = NewStyles(m.lg)
@@ -111,9 +111,25 @@ func RunInitialForm(providerRepo serverapiclient.GitRepository, multiProject boo
 			return nil
 		})
 
+	advancedGroup := huh.NewGroup(
+		huh.NewInput().
+			Title("Advanced").
+			Value(&secondaryProjectsCountString).
+			Validate(func(str string) error {
+				count, err := strconv.Atoi(str) // Try to convert the input string to an integer
+				if err != nil {
+					return errors.New("enter a valid number")
+				}
+				if count > maximumSecondaryProjects {
+					return errors.New("maximum 8 secondary projects allowed")
+				}
+				return nil
+			}))
+
 	dTheme := views.GetCustomTheme()
 
 	m.form = huh.NewForm(
+		advancedGroup.WithHide(!advancedFlag),
 		huh.NewGroup(
 			primaryRepoPrompt,
 		).WithHide(primaryRepoUrl != ""),

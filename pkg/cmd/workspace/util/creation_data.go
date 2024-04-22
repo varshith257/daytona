@@ -10,7 +10,7 @@ import (
 	"github.com/daytonaio/daytona/pkg/views/workspace/create"
 )
 
-func GetCreationDataFromPrompt(workspaceNames []string, userGitProviders []serverapiclient.GitProvider, manual bool, multiProject bool) (workspaceName string, projectRepositoryList []serverapiclient.GitRepository, err error) {
+func GetCreationDataFromPrompt(workspaceNames []string, userGitProviders []serverapiclient.GitProvider, manual, multiProject, advancedFlag bool) (workspaceName string, projectRepositoryList []serverapiclient.GitRepository, err error) {
 	var projectRepoList []serverapiclient.GitRepository
 	var providerRepo serverapiclient.GitRepository
 
@@ -24,7 +24,7 @@ func GetCreationDataFromPrompt(workspaceNames []string, userGitProviders []serve
 		}
 	}
 
-	workspaceCreationPromptResponse, err := create.RunInitialForm(providerRepo, multiProject)
+	workspaceCreationPromptResponse, err := create.RunInitialForm(providerRepo, multiProject, advancedFlag)
 	if err != nil {
 		return "", nil, err
 	}

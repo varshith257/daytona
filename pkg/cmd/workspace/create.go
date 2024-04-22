@@ -189,6 +189,7 @@ func init() {
 	CreateCmd.Flags().StringVarP(&targetNameFlag, "target", "t", "", "Specify the target (e.g. 'local')")
 	CreateCmd.Flags().Bool("manual", false, "Manually enter the git repositories")
 	CreateCmd.Flags().Bool("multi-project", false, "Workspace with multiple projects/repos")
+	CreateCmd.Flags().Bool("advanced", false, "Custom project configurations")
 	CreateCmd.Flags().BoolP("code", "c", false, "Open the workspace in the IDE after workspace creation")
 }
 
@@ -223,6 +224,10 @@ func processPrompting(cmd *cobra.Command, apiClient *serverapiclient.APIClient, 
 	if err != nil {
 		log.Fatal(err)
 	}
+	advancedFlag, err := cmd.Flags().GetBool("advanced")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	gitProviders, res, err := apiClient.GitProviderAPI.ListGitProviders(ctx).Execute()
 	if err != nil {
@@ -248,7 +253,7 @@ func processPrompting(cmd *cobra.Command, apiClient *serverapiclient.APIClient, 
 		workspaceNames = append(workspaceNames, *workspaceInfo.Name)
 	}
 
-	*workspaceName, *repos, err = workspace_util.GetCreationDataFromPrompt(workspaceNames, gitProviders, manual, multiProjectFlag)
+	*workspaceName, *repos, err = workspace_util.GetCreationDataFromPrompt(workspaceNames, gitProviders, manual, multiProjectFlag, advancedFlag)
 	if err != nil {
 		log.Fatal(err)
 		return
