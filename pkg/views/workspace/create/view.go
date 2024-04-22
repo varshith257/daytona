@@ -67,8 +67,11 @@ type Model struct {
 	lg                              *lipgloss.Renderer
 	styles                          *Styles
 	form                            *huh.Form
+	altForm                         *huh.Form
 	width                           int
 	workspaceCreationPromptResponse WorkspaceCreationPromptResponse
+	altscreen                       bool
+	quitting                        bool
 }
 
 func RunInitialForm(providerRepo serverapiclient.GitRepository, multiProject, advancedFlag bool) (WorkspaceCreationPromptResponse, error) {
